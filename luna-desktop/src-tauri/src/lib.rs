@@ -808,7 +808,8 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 确保 Dock 图标始终显示（tray-icon 默认可能隐藏）
+            // 确保 Dock 图标始终显示（tray-icon 默认可能隐藏，仅 macOS）
+            #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
             // 启动飞书 Bot Webhook 服务
