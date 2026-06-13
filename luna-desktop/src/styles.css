@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── 浅色主题（默认） ─── */
+:root {
+  --luna-bg: 255 255 255;
+  --luna-bg-secondary: 245 244 240;
+  --luna-bg-tertiary: 238 237 232;
+  --luna-text: 26 26 24;
+  --luna-text-secondary: 95 94 90;
+  --luna-text-tertiary: 136 135 128;
+  --luna-border: 0 0 0;
+  --luna-accent: 83 74 183;
+  --luna-accent-light: 238 237 254;
+  --luna-green: 29 158 117;
+  --luna-red: 226 75 74;
+}
+
+/* ─── 深色主题 ─── */
+.dark {
+  --luna-bg: 26 26 30;
+  --luna-bg-secondary: 37 37 40;
+  --luna-bg-tertiary: 44 44 48;
+  --luna-text: 228 228 224;
+  --luna-text-secondary: 154 153 150;
+  --luna-text-tertiary: 107 106 102;
+  --luna-border: 255 255 255;
+  --luna-accent: 124 115 224;
+  --luna-accent-light: 42 40 80;
+  --luna-green: 46 204 143;
+  --luna-red: 255 107 107;
+}
+
+@layer base {
+  body {
+    @apply bg-luna-bg-tertiary text-luna-text;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--luna-text-tertiary)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgb(var(--luna-text-tertiary));
+    border-radius: 3px;
+  }
+}

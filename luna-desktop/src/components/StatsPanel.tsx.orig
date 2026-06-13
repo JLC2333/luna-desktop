@@ -1,0 +1,137 @@
+import React, { useEffect, useState } from 'react';
+import { ChatStats, StatSnapshot, STAT_NAMES } from '../types';
+import { getChatStats, setStat, getStatHistory } from '../utils/db';
+
+interface StatsPanelProps {
+  chatId: number;
+  onClose: () => void;
+}
+
+const STAT_EMOJI: Record<string, string> = {
+  stat_happy: '😊',
+  stat_discomfort: '😖',
+  stat_trust: '🤝',
+  stat_energy: '⚡',
+};
+
+const STAT_COLORS: Record<string, string> = {
+  stat_happy: 'bg-green-500',
+  stat_discomfort: 'bg-red-500',
+  stat_trust: 'bg-blue-500',
+  stat_energy: 'bg-yellow-500',
+};
+
+const StatsPanel: React.FC<StatsPanelProps> = ({ chatId, onClose }) => {
+  const [stats, setStatsLocal] = useState<ChatStats | null>(null);
+  const [history, setHistory] = useState<StatSnapshot[]>([]);
+  const [dragging, setDragging] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadStats();
+  }, [chatId]);
+
+  async function loadStats() {
+    const data = await getChatStats(chatId);
+    if (data) {
+      setStatsLocal(data);
+      const hist = await getStatHistory(chatId);
+      setHistory(hist);
+    }
+  }
+
+  async function handleSlider(key: string, newVal: number) {
+    if (!stats) return;
+    const clamped = Math.max(0, Math.min(100, Math.round(newVal)));
+    await setStat(chatId, key, clamped);
+    setStatsLocal({ ...stats, [key]: clamped, updated_at: new Date().toISOString() });
+  }
+
+  if (!stats) {
+    // 初次进入时 stats 可能还没初始化
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={onClose}>
+        <div className="bg-luna-bg border border-luna-border rounded-xl p-6 w-80 shadow-xl" onClick={e => e.stopPropagation()}>
+          <p className="text-sm text-luna-text-secondary text-center">暂无属性数据</p>
+        </div>
+      </div>
+    );
+  }
+
+  const statKeys = ['stat_happy', 'stat_discomfort', 'stat_trust', 'stat_energy'];
+
+  // 极简折线图 (SVG)
+  const chartPoints = history.length > 1
+    ? history.map((s, i) => ({
+        x: (i / (history.length - 1)) * 100,
+        happy: s.stat_happy,
+        discomfort: s.stat_discomfort,
+        trust: s.stat_trust,
+        energy: s.stat_energy,
+      }))
+    : [];
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-luna-bg border border-luna-border rounded-xl p-6 w-80 shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-sm font-semibold text-luna-text">属性值</h2>
+          <button onClick={onClose} className="text-luna-text-tertiary hover:text-luna-text text-lg leading-none">&times;</button>
+        </div>
+
+        {/* 属性值滑块 */}
+        <div className="space-y-3 mb-5">
+          {statKeys.map((key) => {
+            const val = Math.round((stats as any)[key] || 0);
+            return (
+              <div key={key}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-luna-text">{STAT_EMOJI[key]} {STAT_NAMES[key]}</span>
+                  <span className="text-luna-text-secondary">{val}</span>
+                </div>
+                <div className="relative h-2 bg-luna-border rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${STAT_COLORS[key]}`}
+                    style={{ width: `${val}%` }}
+                  />
+                </div>
+                {/* 滑块输入 */}
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={val}
+                  onChange={(e) => handleSlider(key, parseInt(e.target.value))}
+                  className="w-full h-1 mt-1 accent-luna-accent opacity-60 hover:opacity-100 transition-opacity"
+                  style={{ cursor: 'pointer' }}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 历史曲线 */}
+        {chartPoints.length > 1 && (
+          <div>
+            <div className="text-xs font-semibold text-luna-text mb-2">变化趋势</div>
+            <svg viewBox="0 0 100 50" className="w-full h-16">
+              {['happy', 'discomfort', 'trust', 'energy'].map((type, idx) => {
+                const color = ['#22c55e', '#ef4444', '#3b82f6', '#eab308'][idx];
+                const points = chartPoints.map(p =>
+                  `${p.x.toFixed(1)},${(50 - (p as any)[type] * 0.45).toFixed(1)}`
+                ).join(' ');
+                return <polyline key={type} points={points} fill="none" stroke={color} strokeWidth="0.8" strokeLinejoin="round" strokeLinecap="round" opacity="0.7" />;
+              })}
+            </svg>
+            <div className="flex gap-3 justify-center text-[10px] text-luna-text-secondary mt-1">
+              {[['happy', '😊'], ['discomfort', '😖'], ['trust', '🤝'], ['energy', '⚡']].map(([k, e]) => (
+                <span key={k}>{e}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default StatsPanel;

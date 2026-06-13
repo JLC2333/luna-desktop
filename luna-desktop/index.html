@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LunA</title>
+    <!-- Live2D 看板娘：启动时加载，默认隐藏 -->
+    <style>
+      html, body { overflow: visible !important; }
+      #waifu { visibility: hidden; position: fixed; left: 0; bottom: 0; z-index: 999; }
+      #waifu-canvas { width: 280px; height: 250px; }
+      #waifu-tips { min-height: 24px; cursor: grab; user-select: none; font-size: 13px; line-height: 24px; padding: 0 8px; color: #888; }
+      #waifu-tips:active { cursor: grabbing; }
+      #live2d { width: 100%; height: 100%; }
+      #waifu-toggle { display: none; }
+      body.waifu-active #waifu { visibility: visible; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Live2D DOM 结构 -->
+    <div id="waifu">
+      <div id="waifu-tips"></div>
+      <div id="waifu-canvas">
+        <canvas id="live2d" width="800" height="800"></canvas>
+      </div>
+      <div id="waifu-tool"></div>
+    </div>
+    <!-- Live2D SDK + Loader -->
+    <script src="/live2d/live2dcubismcore.min.js"></script>
+    <script src="/live2d/l2d.bundle.js"></script>
+    <style>
+      #waifu-tool { display: flex; gap: 4px; padding: 2px 8px; }
+      #waifu-tool button { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); color: #aaa; border-radius: 4px; cursor: pointer; font-size: 12px; padding: 2px 6px; line-height: 1.4; }
+      #waifu-tool button:hover { background: rgba(255,255,255,0.2); color: #fff; }
+    </style>
+    <script>
+      // Live2D 初始化 + 拖拽
+      (function() {
+        try {
+          const app = window.LunaL2D;
+          if (!app) throw new Error('LunaL2D not loaded');
+          app.initialize();
+          app.run();
+          window._l2dApp = app;
+          window._currentModel = 1;
+          app.changeModel(1);
+          var _zoomPending = 2.0;
+
+          initToolbar();
+        } catch(e) { console.error('[Live2D]', e); }
+
+        var _toolbarInited = false;
+        function getModelList() {
+          var l2d = window.LunaL2D;
+          if (!l2d || !l2d.getModelList) return [];
+          return l2d.getModelList();
+        }
+        function getModelCount() {
+          var l2d = window.LunaL2D;
+          return (l2d && l2d.getModelCount) ? l2d.getModelCount() : 0;
+        }
+        function hasExpressions(idx) {
+          var list = getModelList();
+          if (idx < 0 || idx >= list.length) return false;
+          return list[idx].dirName === '菜菜女仆' || list[idx].dirName === '萨摩小狗' || list[idx].dirName === '白天使dlc';
+        }
+
+        function initToolbar() {
+          if (_toolbarInited) return;
+          _toolbarInited = true;
+        var toolEl = document.getElementById('waifu-tool');
+        if (toolEl) {
+          var initialIdx = Math.min(1, getModelCount() - 1);
+          var switchBtn = document.createElement('button');
+          var list = getModelList();
+          switchBtn.textContent = (list[initialIdx] && list[initialIdx].label) || '👗';
+          switchBtn.addEventListener('click', function() {
+            var l2d = window.LunaL2D;
+            if (!l2d || !l2d._app) return;
+            var cnt = getModelCount();
+            if (cnt === 0) return;
+            window._currentModel = ((window._currentModel || 0) + 1) % cnt;
+            l2d.changeModel(window._currentModel);
+            var models = getModelList();
+            switchBtn.textContent = (models[window._currentModel] && models[window._currentModel].label) || '?';
+            updateToolbar();
+          });
+          toolEl.appendChild(switchBtn);
+
+          // 🎨 装扮面板（仅支持换装的模型显示）
+          const dressBtn = document.createElement('button');
+          dressBtn.textContent = '🎨 装扮';
+          let panelOpen = false;
+          const panel = document.createElement('div');
+          panel.style.cssText = 'display:none;position:absolute;bottom:100%;left:0;background:rgba(20,20,30,0.95);border:1px solid rgba(255,255,255,0.15);border-radius:8px 8px 0 0;padding:8px;margin-bottom:4px;max-height:300px;overflow-y:auto;z-index:10;min-width:200px;';
+          panel.id = 'dress-panel';
+          toolEl.appendChild(dressBtn);
+          toolEl.appendChild(panel);
+          toolEl.style.position = 'relative';
+
+          dressBtn.addEventListener('click', () => {
+            panelOpen = !panelOpen;
+            panel.style.display = panelOpen ? 'block' : 'none';
+            if (panelOpen && panel.children.length === 0) buildDressPanel();
+          });
+
+          /** 根据当前模型切换 UI 可见性 */
+          function updateToolbar() {
+            const hasExp = hasExpressions(window._currentModel || 0);
+            dressBtn.style.display = hasExp ? '' : 'none';
+            if (!hasExp) { panelOpen = false; panel.style.display = 'none'; }
+            // 清空面板内容，下次打开时重新构建（适配不同模型的分类）
+            panel.innerHTML = '';
+          }
+          updateToolbar();
+          if (_zoomPending) {
+            setTimeout(function() { try { applyZoom(_zoomPending); _zoomPending = 0; } catch(_) {} }, 100);
+          }
+
+          // 🔍 缩放 — 增大 canvas 实际分辨率，非 CSS 拉伸
+          const BASE_W = 280, BASE_H = 250;
+          let waifuZoom = 2.0;
+          const zoomInBtn = document.createElement('button');
+          zoomInBtn.textContent = '🔍+';
+          const zoomOutBtn = document.createElement('button');
+          zoomOutBtn.textContent = '🔍-';
+          function applyZoom(z) {
+            waifuZoom = Math.max(0.5, Math.min(3.0, z));
+            const w = Math.round(BASE_W * waifuZoom);
+            const h = Math.round(BASE_H * waifuZoom);
+            const wc = document.getElementById('waifu-canvas');
+            if (wc) { wc.style.width = w + 'px'; wc.style.height = h + 'px'; }
+            // 触发 Cubism 重设 viewport（提高绘制分辨率）
+            const l2d = window.LunaL2D;
+            if (l2d && l2d._app) {
+              const sub = l2d._app.getSubdelegate?.();
+              if (sub) sub.onResize();
+            }
+          }
+          zoomInBtn.addEventListener('click', () => applyZoom(waifuZoom + 0.25));
+          zoomOutBtn.addEventListener('click', () => applyZoom(waifuZoom - 0.25));
+          toolEl.appendChild(zoomOutBtn);
+          toolEl.appendChild(zoomInBtn);
+
+          // 🔄 重置按钮
+          var resetBtn = document.createElement('button');
+          resetBtn.textContent = '🔄 重置';
+          resetBtn.addEventListener('click', function() {
+            // 看板娘窗口有自己的重置按钮
+            panelOpen = false;
+            panel.style.display = 'none';
+          });
+          toolEl.appendChild(resetBtn);
+
+          function getModelCategories() {
+            var idx = window._currentModel || 0;
+            if (idx >= getModelCount()) idx = 0;
+            // 每个模型可以有不同的换装分类
+            var allCats = {
+              '菜菜女仆': [
+                ['😊 表情', 'face', ['1星星眼','1流泪','1爱心','1生气','1红脸','1钱钱','1黑脸']],
+                ['🧍 姿势', 'pose', ['2奶茶','2插手','2比耶','2点单','2菜单','2餐盘右','2餐盘左']],
+                ['💇 头发', 'hair', ['3棕发','3白发','3粉发','3金发','4后发长度1','4后发长度2','双马尾','发带']],
+                ['🎀 配饰', 'acc',  ['1白袜','丝袜带子','变小']],
+                ['🎬 动作', 'act',  ['点击']],
+                ['🎨 色调', 'tone', ['紫色','蓝色']],
+              ],
+              '萨摩小狗': [
+                ['😊 表情', 'dogface', ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22']],
+                ['🎬 预设', 'dogpreset', ['帅气舞台','生气']],
+              ],
+              '白天使dlc': [
+                ['😊 表情', 'face', ['yansha','lianhong','jing','qian','xingxing','heilian','xin','yun','ku']],
+                ['✋ 手势', 'pose', ['heshishoushi','namaishoushi','xiezishoushi']],
+                ['🎬 动作', 'act', ['quantuo','qushuiyin','click']],
+              ],
+            };
+            var models = getModelList();
+            return allCats[models[idx] && models[idx].dirName] || [];
+          }
+
+          function buildDressPanel() {
+            var tip = document.createElement('div');
+            tip.textContent = '💡 再次点击已选按钮可恢复默认';
+            tip.style.cssText = 'font-size:10px;color:#666;margin-bottom:4px;';
+            panel.appendChild(tip);
+            var l2d = window.LunaL2D;
+            var categories = getModelCategories();
+            if (categories.length === 0) {
+              panel.innerHTML = '<div style="padding:8px;color:#666;font-size:11px;">该模型暂无换装</div>';
+              return;
+            }
+            categories.forEach(function(cat) {
+              var label = cat[0], key = cat[1], items = cat[2];
+              var group = document.createElement('div');
+              group.style.cssText = 'margin-bottom:6px;';
+              var title = document.createElement('div');
+              title.textContent = label;
+              title.style.cssText = 'font-size:11px;color:#888;margin-bottom:2px;';
+              group.appendChild(title);
+              var row = document.createElement('div');
+              row.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;';
+              items.forEach(function(name) {
+                var btn = document.createElement('button');
+                btn.textContent = name;
+                btn.style.cssText = 'background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);color:#ccc;border-radius:4px;cursor:pointer;font-size:11px;padding:2px 5px;';
+                btn.addEventListener('click', function() { if (l2d && l2d.applyExpression) l2d.applyExpression(name, key); });
+                row.appendChild(btn);
+              });
+              group.appendChild(row);
+              panel.appendChild(group);
+            });
+          }
+        }
+
+        // 拖拽（整个看板娘可拖，含 canvas；5px 防误触）
+        const waifuEl = document.getElementById('waifu');
+        if (!waifuEl) return;
+        let dragging = false, dragStarted = false, startX = 0, startY = 0, left = 0, bottom = 0;
+        waifuEl.addEventListener('mousedown', (e) => {
+          if (e.target.tagName === 'BUTTON') return;
+          dragging = true; dragStarted = false;
+          startX = e.clientX; startY = e.clientY;
+          const rect = waifuEl.getBoundingClientRect();
+          left = rect.left; bottom = window.innerHeight - rect.bottom;
+          waifuEl.style.transition = 'none';
+          e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+          if (!dragging) return;
+          const dx = e.clientX - startX, dy = e.clientY - startY;
+          if (!dragStarted && (Math.abs(dx) < 5 && Math.abs(dy) < 5)) return;
+          dragStarted = true;
+          waifuEl.style.left = (left + dx) + 'px';
+          waifuEl.style.bottom = (bottom - dy) + 'px';
+          waifuEl.style.top = 'auto'; waifuEl.style.right = 'auto';
+        });
+        document.addEventListener('mouseup', () => { dragging = false; waifuEl.style.transition = ''; });
+      }
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+[package]
+name = "luna-desktop"
+version = "1.1.5"
+description = "LunA - 角色扮演聊天"
+authors = ["Twave"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["macos-private-api", "tray-icon"] }
+tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["fs", "macros", "rt", "time", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+chrono = "0.4"
+log = "0.4"
+axum = "0.8"
+tower-http = "0.6"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2.0", features = ["macos-private-api"] }
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

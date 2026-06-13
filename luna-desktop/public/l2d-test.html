@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>L2D Test</title>
+<style>
+body{margin:0;background:#1a1a2e;height:100vh;overflow:hidden}
+#info{position:fixed;top:10px;left:10px;color:#fff;font:14px monospace;z-index:999}
+#waifu{position:fixed;left:0;bottom:0;z-index:999}
+#waifu-canvas{width:280px;height:250px}
+#live2d{width:100%;height:100%}
+</style>
+</head>
+<body>
+<div id="info">Step 1: Loading Cubism SDK...</div>
+<div id="waifu">
+  <div id="waifu-tips"></div>
+  <div id="waifu-canvas">
+    <canvas id="live2d" width="800" height="800"></canvas>
+  </div>
+  <div id="waifu-tool"></div>
+</div>
+<script>
+const info = (s) => { document.getElementById('info').textContent = s; console.log(s); };
+
+async function main() {
+  // Load Cubism SDK from CDN
+  info('Step 1: Loading Cubism SDK...');
+  await new Promise((ok, err) => {
+    const s = document.createElement('script');
+    s.src = 'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js';
+    s.onload = ok; s.onerror = () => err('Cubism SDK failed');
+    document.head.appendChild(s);
+  });
+  info('Step 2: Cubism SDK loaded, importing AppDelegate...');
+
+  // Import the Live2D widget chunk
+  const m = await import('/live2d/chunk/index2.js');
+  info('Step 3: AppDelegate imported, initializing...');
+
+  const app = new m.AppDelegate();
+  try { app.initialize(); info('Step 4: AppDelegate initialized'); }
+  catch(e) { info('ERROR in initialize: '+e.message); return; }
+
+  try { app.changeModel('/live2d/model/maid.model3.json'); info('Step 5: Model loaded, running...'); }
+  catch(e) { info('ERROR in changeModel: '+e.message); return; }
+
+  try { app.run(); info('DONE! Model should render now.'); }
+  catch(e) { info('ERROR in run: '+e.message); return; }
+}
+
+main().catch(e => { info('FATAL: '+e.message); console.error(e); });
+</script>
+</body>
+</html>

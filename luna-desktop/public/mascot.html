@@ -1,0 +1,447 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LunA</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent!important;user-select:none;-webkit-user-select:none}
+#live2d{position:fixed;top:0;left:0;width:100vw!important;height:100vh!important;display:block}
+
+/* 诊断面板 — 右上角 */
+#diag{position:fixed;top:4px;right:4px;width:220px;max-height:calc(100vh - 40px);background:rgba(0,0,0,0.85);color:#0f0;font:9px/1.5 monospace;padding:4px 6px;z-index:999;display:none;text-align:left;user-select:text;-webkit-user-select:text;overflow-y:auto;border-radius:4px}
+#diag.show{display:block}
+#diag::-webkit-scrollbar{width:3px}
+#diag::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.2)}
+#diag .e{color:#f55}
+#diag .w{color:#fa0}
+
+#stat{position:fixed;bottom:4px;right:6px;width:6px;height:6px;border-radius:50%;z-index:1000;pointer-events:none}
+#stat.ok{background:#0f0}
+#stat.load{background:#fa0;animation:pulse 0.6s infinite}
+#stat.err{background:#f00}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* 换装面板 */
+#dress-panel{display:none;position:fixed;bottom:30px;left:0;background:rgba(20,20,30,0.95);border:1px solid rgba(255,255,255,0.15);border-radius:0 8px 0 0;padding:8px;max-height:280px;overflow-y:auto;z-index:100;min-width:180px;max-width:300px}
+#dress-panel .dtip{font-size:10px;color:#666;padding:4px}
+
+/* Tab 操作栏 — 按住 Tab 才显示 */
+#tab-bar{display:none;position:fixed;bottom:0;left:0;right:0;height:28px;z-index:150;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;gap:5px;padding:0 6px;user-select:none;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+#tab-bar.active{display:flex}
+#tab-bar button{width:22px;height:22px;border:none;border-radius:6px;background:rgba(255,255,255,0.12);color:#ddd;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.12s;padding:0}
+#tab-bar button:hover{background:rgba(102,126,234,0.5);color:#fff;transform:scale(1.1)}
+#tab-bar .sep{width:1px;height:20px;background:rgba(255,255,255,0.1);margin:0 2px}
+</style>
+</head>
+<body>
+<canvas id="live2d"></canvas>
+<div id="diag"></div>
+<div id="stat" class="load"></div>
+<div id="dress-panel"></div>
+<div id="tab-bar">
+  <button id="tb-prev" title="上一个模型">◀</button>
+  <button id="tb-next" title="下一个模型">▶</button>
+  <span class="sep"></span>
+  <button id="tb-zoomin" title="放大">+</button>
+  <button id="tb-zoomout" title="缩小">−</button>
+  <span class="sep"></span>
+  <button id="tb-reset" title="重置姿势">🔄</button>
+  <button id="tb-default" title="设为默认">📌</button>
+  <span class="sep"></span>
+  <button id="tb-log" title="日志">📋</button>
+  <span style="flex:1"></span>
+  <span style="font-size:9px;color:rgba(255,255,255,0.2);padding-right:4px">Tab</span>
+</div>
+<script src="/live2d/live2dcubismcore.min.js"></script>
+<script src="/live2d/l2d.bundle.js"></script>
+<script>
+(function(){
+'use strict';
+
+var diag = document.getElementById('diag');
+var stat = document.getElementById('stat');
+var diagLines = [];
+
+function dlog(msg) {
+  var t = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  diagLines.push(t + ' ' + msg);
+  if (diagLines.length > 100) diagLines.shift();
+  diag.innerHTML = diagLines.map(function(l) {
+    var c = l.indexOf('ERR')>=0?'e':l.indexOf('WRN')>=0?'w':'';
+    return '<span class="'+c+'">'+l+'</span>';
+  }).join('<br>');
+}
+
+function setStat(s) { stat.className = s; stat.title = s; }
+
+var invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
+          || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke);
+var listen = (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen)
+          || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.listen);
+
+dlog('IPC='+(invoke?'OK':'NO'));
+
+// ─── 模型文件加载 ───
+(function(){
+  if (!invoke) return;
+  var _fetch = window.fetch;
+  window.fetch = function(url, opts) {
+    if (typeof url === 'string' && url.indexOf('/live2d/model/') === 0) {
+      var rel = url.slice('/live2d/model/'.length);
+      return invoke('read_model_file', { path: rel }).then(function(data) {
+        var arr = new Uint8Array(data);
+        var mime = 'application/octet-stream';
+        if (rel.endsWith('.json')) mime = 'application/json';
+        else if (rel.endsWith('.png')) mime = 'image/png';
+        else if (rel.endsWith('.moc3')) mime = 'application/octet-stream';
+        return new Response(arr, {status:200, headers:{'Content-Type':mime}});
+      }).catch(function(err) {
+        dlog('ERR FETCH '+rel+': '+err);
+        // 降级 luna-model://
+        return _fetch.call(window, 'luna-model://localhost/'+rel, opts);
+      });
+    }
+    return _fetch.call(window, url, opts);
+  };
+
+  // 纹理走 IPC → Blob URL
+  var _imgSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+  if (_imgSrc && _imgSrc.set) {
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      get: _imgSrc.get,
+      set: function(url) {
+        if (typeof url === 'string' && url.indexOf('/live2d/model/') === 0) {
+          var rel = url.slice('/live2d/model/'.length);
+          var self = this;
+          invoke('read_model_file', { path: rel }).then(function(data) {
+            var blob = new Blob([new Uint8Array(data)]);
+            _imgSrc.set.call(self, URL.createObjectURL(blob));
+          }).catch(function() {
+            _imgSrc.set.call(self, 'luna-model://localhost/' + rel);
+          });
+          return;
+        }
+        _imgSrc.set.call(this, url);
+      },
+      configurable: true
+    });
+  }
+})();
+
+// ─── Live2D 初始化（先注册模型，再启动引擎，避免加载不存在的内置模型）───
+(function initL2D(){
+var L=window.LunaL2D;
+if(!L){setTimeout(initL2D,100);return}
+
+// 先注册已安装模型
+window._installedNames = [];
+function startEngine() {
+  L.initialize();
+  L.run();
+  window._l2dApp=L;
+  dlog('L2D started');
+
+  var all = L.getModelList ? L.getModelList() : [];
+  var validIdx = -1;
+  for (var i = all.length - 1; i >= 0; i--) {
+    if (window._installedNames.indexOf(all[i].dirName) >= 0) {
+      validIdx = i; break;
+    }
+  }
+  if (validIdx < 0) validIdx = 0;
+  window._currentModel = validIdx;
+  dlog('Switch to '+window._currentModel+'/'+all.length+' ('+(all[validIdx]?all[validIdx].dirName:'?')+')');
+  L.changeModel(window._currentModel);
+  setStat('ok');
+}
+
+if (invoke) {
+  invoke('list_installed_models').then(function(list) {
+    dlog('Models: '+(list?list.length:0)+' installed');
+    if (list && list.length) {
+      list.forEach(function(m) {
+        try { L.registerModel(m.dir_name, m.json_file, m.dir_name); }
+        catch(e) { dlog('ERR register '+m.dir_name+': '+e); }
+        window._installedNames.push(m.dir_name);
+      });
+    }
+    startEngine();
+  }).catch(function(err) {
+    dlog('ERR list: '+err);
+    startEngine();
+  });
+} else {
+  startEngine();
+}
+
+// 视角微调
+var shiftTimer = setInterval(function() {
+  try {
+    var sub = L._app.getSubdelegate();
+    if (!sub) return;
+    var mgr = sub.getLive2DManager();
+    if (!mgr || !mgr._viewMatrix) return;
+    mgr._viewMatrix.loadIdentity();
+    mgr._viewMatrix.translate(0, 0.08);
+    mgr._viewMatrix.scale(1.0, 0.92);
+    clearInterval(shiftTimer);
+  } catch(e) {}
+}, 200);
+})();
+
+// ─── 事件监听 ───
+if (listen) {
+  listen('luna:change-model', function(e) {
+    var p = e.payload, L = window.LunaL2D;
+    if (!L || !L.registerModel) return;
+    try {
+      var i = L.registerModel(p.dirName, p.jsonFile, p.label || p.dirName);
+      L.changeModel(i);
+      window._currentModel = i;
+      // 跟踪已安装模型名
+      if (!window._installedNames) window._installedNames = [];
+      if (window._installedNames.indexOf(p.dirName) < 0) window._installedNames.push(p.dirName);
+      setStat('ok');
+    } catch(err) { dlog('ERR switch: '+err); setStat('err'); }
+  });
+
+  listen('luna:mousemove', function(e) {
+    _mx = e.payload.nx;
+    _my = e.payload.ny;
+  });
+}
+
+// ─── 鼠标跟踪 ───
+var _mx=0,_my=0,_sx=0,_sy=0;
+
+// rAF 循环
+(function loop(){
+  _sx += (_mx - _sx) * 0.25;
+  _sy += (_my - _sy) * 0.25;
+  try {
+    var L=window._l2dApp;
+    if (L && L._app) {
+      var sub = L._app._subdelegates && L._app._subdelegates.at(0);
+      if (sub) {
+        var mgr = sub.getLive2DManager();
+        if (mgr && mgr._models && mgr._models[0]) {
+          var dm = mgr._models[0]._dragManager;
+          if (dm) {
+            dm._faceTargetX = _sx * 1.2;
+            dm._faceTargetY = _sy * 1.2;
+            dm._faceX = _sx * 1.2;
+            dm._faceY = _sy * 1.2;
+            dm._faceVX = 0; dm._faceVY = 0;
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  requestAnimationFrame(loop);
+})();
+
+// ─── Tab 操作栏按钮 ───
+function switchModel(dir) {
+  var L = window.LunaL2D;
+  if (!L) return;
+  // 只循环已安装的模型
+  var installed = window._installedNames || [];
+  if (!installed.length) return;
+  var curName = '';
+  var all = L.getModelList ? L.getModelList() : [];
+  if (all[window._currentModel]) curName = all[window._currentModel].dirName;
+  var curIdx = installed.indexOf(curName);
+  if (curIdx < 0) curIdx = 0;
+  var nextName = installed[((curIdx + dir) + installed.length) % installed.length];
+  for (var j = 0; j < all.length; j++) {
+    if (all[j].dirName === nextName) {
+      window._currentModel = j;
+      L.changeModel(j);
+      break;
+    }
+  }
+}
+
+var _zoomIdx = 2, _baseW = 280, _baseH = 350;
+function doResize() {
+  var z = Math.max(0.25, Math.min(3.0, _zoomIdx * 0.25 + 0.75));
+  var w = Math.round(_baseW * z), h = Math.round(_baseH * z) + 28;
+  if (invoke) invoke('resize_mascot', {width: w, height: h}).catch(function(){});
+}
+
+document.getElementById('tb-prev').onclick = function() { switchModel(-1); };
+document.getElementById('tb-next').onclick = function() { switchModel(1); };
+document.getElementById('tb-zoomin').onclick = function() { _zoomIdx = Math.min(9, _zoomIdx+1); doResize(); };
+document.getElementById('tb-zoomout').onclick = function() { _zoomIdx = Math.max(-2, _zoomIdx-1); doResize(); };
+document.getElementById('tb-reset').onclick = function() {
+  var L = window.LunaL2D;
+  if (L && L.resetModel) L.resetModel();
+};
+document.getElementById('tb-log').onclick = function() {
+  var d = document.getElementById('diag');
+  d.classList.toggle('show');
+};
+document.getElementById('tb-default').onclick = function() {
+  var all = window.LunaL2D && window.LunaL2D.getModelList ? window.LunaL2D.getModelList() : [];
+  var name = (all[window._currentModel] || {}).dirName || '';
+  if (name) {
+    localStorage.setItem('luna-default-model', name);
+    dlog('Default set: '+name);
+  }
+};
+
+// Canvas 点击 → 转发给 L2D 引擎（tap 反应 + 拖拽）
+document.getElementById('live2d').addEventListener('pointerdown', function(e) {
+  var app = window._l2dApp && window._l2dApp._app;
+  if (app && app.onPointerBegan) {
+    app.onPointerBegan(e);
+    function onUp(ev) {
+      document.removeEventListener('pointerup', onUp);
+      if (app && app.onPointerEnded) app.onPointerEnded(ev);
+    }
+    document.addEventListener('pointerup', onUp);
+  }
+});
+document.getElementById('live2d').addEventListener('pointermove', function(e) {
+  if (e.buttons !== 1) return; // only when dragging
+  var app = window._l2dApp && window._l2dApp._app;
+  if (app && app.onPointerMoved) app.onPointerMoved(e);
+});
+
+// Tab 栏 → 拖拽窗口
+document.getElementById('tab-bar').addEventListener('pointerdown', function(e) {
+  if (e.target.tagName === 'BUTTON') return;
+  if (invoke) invoke('start_mascot_drag').catch(function(){});
+});
+
+// ─── Tab 键切换操作栏 ───
+var _tabActive = false;
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (!_tabActive) { _tabActive = true; document.getElementById('tab-bar').classList.add('active'); }
+  }
+});
+document.addEventListener('keyup', function(e) {
+  if (e.key === 'Tab') { _tabActive = false; document.getElementById('tab-bar').classList.remove('active'); }
+});
+window.addEventListener('blur', function() {
+  if (_tabActive) { _tabActive = false; document.getElementById('tab-bar').classList.remove('active'); }
+});
+
+// ─── 换装面板 ───
+var _dressOpen = false;
+var _panelBuilt = false;
+
+function getCurrentDirName() {
+  var models = window.LunaL2D && window.LunaL2D.getModelList ? window.LunaL2D.getModelList() : [];
+  return (models[window._currentModel] || {}).dirName || '';
+}
+
+function buildDressPanel() {
+  if (_panelBuilt) return; _panelBuilt = true;
+  var p = document.getElementById('dress-panel');
+  var dn = getCurrentDirName();
+  if (!dn) { p.innerHTML = '<div class="dtip">暂无模型</div>'; return; }
+  p.innerHTML = '<div class="dtip">加载中...</div>';
+
+  // 通过 fetch 读 model3.json 获取表情列表
+  fetch('/live2d/model/' + dn + '/' + dn + '.model3.json').then(function(r) {
+    if (!r.ok) throw Error('fail');
+    return r.json();
+  }).then(function(data) {
+    var exps = (data.FileReferences && data.FileReferences.Expressions) || [];
+    if (!exps.length) throw Error('no exps');
+    renderDressPanel(exps);
+  }).catch(function() {
+    if (invoke) {
+      invoke('list_model_expressions', { dirName: dn }).then(function(list) {
+        if (list && list.length) {
+          renderDressPanel(list.map(function(e) { return { Name: e.name, File: e.file }; }));
+        } else {
+          p.innerHTML = '<div class="dtip">该模型暂无换装</div>';
+        }
+      }).catch(function() { p.innerHTML = '<div class="dtip">该模型暂无换装</div>'; });
+    } else {
+      p.innerHTML = '<div class="dtip">该模型暂无换装</div>';
+    }
+  });
+}
+
+function renderDressPanel(expressions) {
+  var p = document.getElementById('dress-panel');
+  p.innerHTML = '<div style="font-size:10px;color:#666;margin-bottom:4px">点击切换表情，再次点击恢复默认</div>';
+  var items = expressions.map(function(e) {
+    var stem = e.File.replace(/\.exp3\.json$/, '');
+    return { display: e.Name || stem, apply: stem };
+  }).filter(function(e) { return e.display; });
+  if (!items.length) { p.innerHTML = '<div class="dtip">该模型暂无换装</div>'; return; }
+
+  // 按数字前缀分组
+  var groups = {};
+  items.forEach(function(it) {
+    var m = it.display.match(/^(\d+)/);
+    var k = m ? m[1] : 'more';
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(it);
+  });
+  var keys = Object.keys(groups);
+  var labels = { '1': '表情', '2': '姿势', '3': '头发', '4': '配饰', 'more': '其他' };
+
+  keys.sort().forEach(function(key) {
+    var its = groups[key];
+    var g = document.createElement('div'); g.style.cssText = 'margin-bottom:6px';
+    var t = document.createElement('div'); t.style.cssText = 'font-size:11px;color:#888;margin-bottom:2px';
+    t.textContent = labels[key] || ('分组 ' + key); g.appendChild(t);
+    var r = document.createElement('div'); r.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px';
+    its.forEach(function(it) {
+      var b = document.createElement('button');
+      b.style.cssText = 'background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);color:#ccc;border-radius:4px;cursor:pointer;font-size:11px;padding:2px 5px';
+      b.textContent = it.display;
+      b.onclick = function() {
+        var L = window.LunaL2D;
+        if (L && L.applyExpression) L.applyExpression(it.apply, key);
+      };
+      r.appendChild(b);
+    });
+    g.appendChild(r); p.appendChild(g);
+  });
+}
+
+// 换装面板按钮
+var _tbDress = document.createElement('button');
+_tbDress.textContent = '🎨';
+_tbDress.title = '换装';
+_tbDress.onclick = function() {
+  _dressOpen = !_dressOpen;
+  var p = document.getElementById('dress-panel');
+  p.style.display = _dressOpen ? 'block' : 'none';
+  if (_dressOpen) { p.innerHTML = ''; _panelBuilt = false; buildDressPanel(); }
+};
+document.getElementById('tab-bar').insertBefore(_tbDress, document.getElementById('tb-reset'));
+var _sep2 = document.createElement('span');
+_sep2.className = 'sep';
+document.getElementById('tab-bar').insertBefore(_sep2, _tbDress);
+
+// ─── 转发日志到主窗口 ───
+(function(){
+  if (!invoke) return;
+  var _origDlog = dlog;
+  dlog = function(msg) {
+    _origDlog(msg);
+    var level = msg.indexOf('ERR')>=0 ? 'error' : msg.indexOf('WRN')>=0 ? 'warn' : 'log';
+    try { invoke('luna_log_from_mascot', { level: level, msg: msg, detail: '' }).catch(function(){}); } catch(e) {}
+  };
+})();
+
+// Cleanup
+window.addEventListener('beforeunload',function(){
+  var L=window._l2dApp;
+  if(L&&L._app){L._app.stop();try{L._app.release()}catch(_){}}
+});
+})();
+</script>
+</body>
+</html>

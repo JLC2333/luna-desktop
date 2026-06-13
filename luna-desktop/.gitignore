@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+src-tauri/target/
+public/live2d/model/
+*.log
+.env
+.env.*
+.vite/
+*.dmg
+*.msi
+*.exe
