@@ -17,6 +17,7 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: luna-desktop
 
       - name: Install Tauri CLI
         uses: taiki-e/install-action@v2
@@ -25,12 +26,13 @@ jobs:
 
       - name: Build Windows installer
         run: cargo tauri build --bundles nsis
+        working-directory: luna-desktop
 
       - name: Upload .exe installer
         uses: actions/upload-artifact@v4
         with:
           name: LunA_Windows_Installer
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          path: luna-desktop/src-tauri/target/release/bundle/nsis/*.exe
 
   build-macos:
     runs-on: macos-latest
@@ -43,6 +45,7 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: luna-desktop
 
       - name: Install Tauri CLI
         uses: taiki-e/install-action@v2
@@ -51,9 +54,10 @@ jobs:
 
       - name: Build macOS DMG
         run: cargo tauri build --bundles dmg
+        working-directory: luna-desktop
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
           name: LunA_macOS_DMG
-          path: src-tauri/target/release/bundle/dmg/*.dmg
+          path: luna-desktop/src-tauri/target/release/bundle/dmg/*.dmg
