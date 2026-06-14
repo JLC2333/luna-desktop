@@ -95,6 +95,13 @@ fn toggle_mascot(app: tauri::AppHandle, state: tauri::State<'_, MascotState>) ->
         if w.is_visible().unwrap_or(false) { w.hide().map_err(|e| e.to_string())?; Ok(false) }
         else { w.show().map_err(|e| e.to_string())?; let _ = w.set_always_on_top(true); Ok(true) }
     } else {
+        // Windows: transparent 和 decorations(false) 组合可能白屏，用半透明背景替代
+        #[cfg(target_os = "windows")]
+        let win = WebviewWindowBuilder::new(&app, L, WebviewUrl::App("mascot.html".into()))
+            .title("LunA 看板娘").inner_size(350.0, 466.0).decorations(true)
+            .always_on_top(true).resizable(false).skip_taskbar(false)
+            .build().map_err(|e| format!("创建看板娘窗口失败: {}", e))?;
+        #[cfg(not(target_os = "windows"))]
         let win = WebviewWindowBuilder::new(&app, L, WebviewUrl::App("mascot.html".into()))
             .title("").inner_size(350.0, 466.0).decorations(false).transparent(true)
             .always_on_top(true).resizable(false).skip_taskbar(true)
@@ -104,7 +111,7 @@ fn toggle_mascot(app: tauri::AppHandle, state: tauri::State<'_, MascotState>) ->
             use objc2::msg_send; use objc2_app_kit::NSWindow;
             if let Ok(p) = win.ns_window() {
                 let ns = &*(p as *const NSWindow);
-                let () = msg_send![ns, setLevel: 25i64]; // 高于菜单栏(24)，可拖到屏幕任意位置
+                let () = msg_send![ns, setLevel: 25i64];
                 let () = msg_send![ns, setMovableByWindowBackground: true];
                 let () = msg_send![ns, setIgnoresMouseEvents: false];
             }

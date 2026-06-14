@@ -124,15 +124,16 @@ function App() {
     setQuitDialog("writing");
     setDiaryStatus("正在整理今日对话...");
 
-    const result = await generateDiary({
+    // 最多等 15 秒，超时自动退出（避免 API 不可用时卡住）
+    const timeout = new Promise((resolve) => setTimeout(() => resolve({ message: "超时，跳过日记" }), 15000));
+    const result: any = await Promise.race([generateDiary({
       bindSystemClock,
       diaryMaxLength,
       settings: apiSettings,
       onStatus: (msg) => setDiaryStatus(msg),
-    });
+    }), timeout]);
 
     setDiaryStatus(result.message);
-    // 无论是否写了日记，都退出
     await invoke("exit_app");
   }
 
